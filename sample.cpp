@@ -1,11 +1,14 @@
-// my_cpp_library/example.cpp
 #include <iostream>
+#include <string>
 
-void unusedFunction() {
-    std::cout << "This function is never used!" << std::endl;
+void printUserInput(std::string userInput) {
+    std::cout << userInput; // Potential XSS vulnerability
 }
 
 int main() {
-    std::cout << "Hello, C++!" << std::endl;
+    std::string userInput;
+    std::cout << "Enter some text: ";
+    std::cin >> userInput;
+    printUserInput(userInput);
     return 0;
 }
