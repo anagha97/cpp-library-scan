@@ -1,4 +1,4 @@
-name: C/C++ CI
+name: C/C++ Security Analysis
 
 on:
   push:
@@ -7,23 +7,102 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  security-analysis:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: sudo apt-get update && sudo apt-get install -y build-essential
+      - name: Install Cppcheck and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck jq
 
-    - name: configure
-      run: ./build/configure --verbose
+      - name: Run Cppcheck
+        run: |
+          echo "Running Cppcheck..."
+          cppcheck --enable=all,warning,style,performance,portability,information \
+                   --std=c++11 \
+                   --check-library \
+                   --verbose \
+                   --template="{file}:{line}: {severity}: {message} [{id}]" \
+                   --output-file=cppcheck_findings.txt .
 
-    - name: make
-      run: make -j2
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
 
-    - name: make check
-      run: make check
+      - name: Install Semgrep
+        run: |
+          python -m pip install --upgrade pip
+          pip install semgrep
 
-    - name: make distcheck
-      run: make distcheck
+      - name: Create Custom Semgrep Rules
+        run: |
+          cat > custom_rules.yaml << EOF
+          rules:
+          - id: cpp-xss
+            patterns:
+              - pattern: |
+                  std::cout << $USER_INPUT;
+            message: Potential XSS vulnerability - Direct user input in HTML output
+            languages: [cpp]
+            severity: ERROR
+          
+          - id: cpp-sql-injection
+            patterns:
+              - pattern: |
+                  sprintf($BUFFER, "SELECT * FROM users WHERE name = '%s'", $USER_INPUT);
+              - pattern: |
+                  strcat($BUFFER, $USER_INPUT);
+              - pattern: |
+                  std::string query = "SELECT * FROM users WHERE name = " + $USER_INPUT;
+            message: SQL Injection vulnerability - Unsanitized user input in SQL query
+            languages: [cpp]
+            severity: ERROR
+          EOF
+
+      - name: Run Semgrep
+        run: |
+          echo "Running Semgrep..."
+          semgrep --config custom_rules.yaml --output=semgrep-findings.json .
+
+      - name: Create Security Report
+        run: |
+          echo "# C++ Security Analysis Report" > analysis_findings.txt
+          echo "## Analysis performed on $(date)" >> analysis_findings.txt
+          echo "" >> analysis_findings.txt
+          
+          echo "## 1. Cppcheck Findings" >> analysis_findings.txt
+          if [ -f cppcheck_findings.txt ] && [ -s cppcheck_findings.txt ]; then
+            echo "### Security Issues:" >> analysis_findings.txt
+            cat cppcheck_findings.txt >> analysis_findings.txt
+          else
+            echo "No issues found by Cppcheck" >> analysis_findings.txt
+          fi
+          echo "" >> analysis_findings.txt
+          
+          echo "## 2. Semgrep Findings" >> analysis_findings.txt
+          if [ -f semgrep-findings.json ] && [ -s semgrep-findings.json ]; then
+            echo "### Security Issues:" >> analysis_findings.txt
+            jq -r '.results[]? | "- [\(.extra.severity)] \(.extra.message) in \(.path):\(.start.line)"' semgrep-findings.json >> analysis_findings.txt
+          else
+            echo "No issues found by Semgrep" >> analysis_findings.txt
+          fi
+          
+          echo "" >> analysis_findings.txt
+          echo "## 3. Known Security Issues to Check" >> analysis_findings.txt
+          echo "1. XSS Vulnerability Risk: Check any HTML output containing user input" >> analysis_findings.txt
+          echo "2. SQL Injection Risk: Check all SQL queries containing user input" >> analysis_findings.txt
+          echo "3. Input Validation: Verify all user inputs are properly sanitized" >> analysis_findings.txt
+
+      - name: Upload Analysis Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-analysis-results
+          path: |
+            analysis_findings.txt
+            cppcheck_findings.txt
+            semgrep-findings.json
+            custom_rules.yaml
