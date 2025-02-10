@@ -17,7 +17,7 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y build-essential
 
     - name: configure
-      run: ./configure --verbose
+      run: ./build/configure --verbose
 
     - name: make
       run: make -j2
